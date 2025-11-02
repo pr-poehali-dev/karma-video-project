@@ -1,0 +1,35 @@
+{
+  "tests": [
+    {
+      "name": "Search for web results",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "query": "Python programming",
+        "type": "web"
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "query": "string",
+        "type": "string",
+        "results": "array"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Search for music",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "query": "rock music",
+        "type": "music"
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "query": "string",
+        "results": "array"
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}

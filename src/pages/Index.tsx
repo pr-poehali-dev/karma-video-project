@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Icon from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -7,12 +7,29 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useToast } from '@/hooks/use-toast';
+
+interface SearchResult {
+  title: string;
+  snippet: string;
+  url: string;
+  source: string;
+  type?: string;
+  thumbnail?: string;
+}
+
+const SEARCH_API_URL = 'https://functions.poehali.dev/e6746de1-33e9-4ae6-81be-4dbf2ef1f47f';
 
 const Index = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSection, setActiveSection] = useState('home');
+  const [searchType, setSearchType] = useState('web');
   const [isListening, setIsListening] = useState(false);
   const [aiHelperOpen, setAiHelperOpen] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const { toast } = useToast();
 
   const sidebarItems = [
     { id: 'bookmarks', icon: 'Bookmark', label: 'Закладки', count: 12 },
@@ -24,22 +41,135 @@ const Index = () => {
   ];
 
   const quickSearchModes = [
-    { id: 'text', icon: 'Search', label: 'Текст' },
+    { id: 'web', icon: 'Search', label: 'Текст' },
     { id: 'voice', icon: 'Mic', label: 'Голос' },
     { id: 'image', icon: 'Image', label: 'Фото' },
     { id: 'music', icon: 'Music', label: 'Музыка' },
   ];
 
-  const handleVoiceSearch = () => {
-    setIsListening(!isListening);
-  };
-
   const aiTips = [
     { title: 'Как искать голосом?', tip: 'Нажми на иконку микрофона и произнеси свой запрос' },
     { title: 'Поиск по фото', tip: 'Загрузи изображение, чтобы найти похожие картинки или информацию' },
     { title: 'Найди музыку', tip: 'Опиши песню словами: настроение, жанр или часть текста' },
-    { title: 'Горячие клавиши', tip: 'Ctrl+K для быстрого поиска, Ctrl+B для закладок' },
+    { title: 'Горячие клавиши', tip: 'Enter для поиска, Ctrl+K для быстрого поиска' },
   ];
+
+  const handleSearch = async (query: string = searchQuery, type: string = searchType) => {
+    if (!query.trim()) return;
+
+    setIsSearching(true);
+    setHasSearched(true);
+
+    try {
+      const response = await fetch(SEARCH_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: query.trim(),
+          type: type
+        })
+      });
+
+      const data = await response.json();
+      setSearchResults(data.results || []);
+      
+      toast({
+        title: 'Поиск выполнен',
+        description: `Найдено результатов: ${data.results?.length || 0}`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Ошибка поиска',
+        description: 'Не удалось выполнить поиск. Попробуйте еще раз.',
+        variant: 'destructive',
+      });
+      setSearchResults([]);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleVoiceSearch = () => {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      toast({
+        title: 'Голосовой ввод недоступен',
+        description: 'Ваш браузер не поддерживает голосовой ввод',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    
+    recognition.lang = 'ru-RU';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+      toast({
+        title: 'Слушаю...',
+        description: 'Произнесите ваш запрос',
+      });
+    };
+
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setSearchQuery(transcript);
+      handleSearch(transcript, searchType);
+      setIsListening(false);
+    };
+
+    recognition.onerror = () => {
+      setIsListening(false);
+      toast({
+        title: 'Ошибка распознавания',
+        description: 'Не удалось распознать речь',
+        variant: 'destructive',
+      });
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.start();
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSearch();
+    }
+  };
+
+  const handleImageSearch = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = (e: any) => {
+      const file = e.target?.files?.[0];
+      if (file) {
+        toast({
+          title: 'Изображение загружено',
+          description: 'Выполняется поиск по изображению...',
+        });
+        handleSearch(`поиск по изображению: ${file.name}`, 'image');
+      }
+    };
+    input.click();
+  };
+
+  const changeSearchType = (type: string) => {
+    setSearchType(type);
+    if (type === 'voice') {
+      handleVoiceSearch();
+    } else if (type === 'image') {
+      handleImageSearch();
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -135,7 +265,9 @@ const Index = () => {
                 placeholder="Поиск в интернете..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyPress={handleKeyPress}
                 className="pl-12 pr-40 h-14 text-lg bg-background border-border"
+                disabled={isSearching}
               />
               <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-2">
                 <Button
@@ -143,13 +275,26 @@ const Index = () => {
                   variant={isListening ? 'default' : 'ghost'}
                   onClick={handleVoiceSearch}
                   className="h-10 w-10"
+                  disabled={isSearching}
                 >
                   <Icon name="Mic" size={20} />
                 </Button>
-                <Button size="icon" variant="ghost" className="h-10 w-10">
+                <Button 
+                  size="icon" 
+                  variant="ghost" 
+                  className="h-10 w-10"
+                  onClick={handleImageSearch}
+                  disabled={isSearching}
+                >
                   <Icon name="Image" size={20} />
                 </Button>
-                <Button size="icon" variant="ghost" className="h-10 w-10">
+                <Button 
+                  size="icon" 
+                  variant="ghost" 
+                  className="h-10 w-10"
+                  onClick={() => handleSearch(searchQuery, 'music')}
+                  disabled={isSearching || !searchQuery}
+                >
                   <Icon name="Music" size={20} />
                 </Button>
               </div>
@@ -160,112 +305,214 @@ const Index = () => {
         <div className="flex-1 overflow-auto">
           {activeSection === 'home' && (
             <div className="max-w-6xl mx-auto p-6 space-y-8">
-              <div className="text-center space-y-4 py-12">
-                <div className="inline-flex items-center justify-center w-20 h-20 bg-primary/10 rounded-full mb-4">
-                  <Icon name="Zap" size={40} className="text-primary" />
-                </div>
-                <h2 className="text-4xl font-bold text-foreground">
-                  Добро пожаловать в SearchPro
-                </h2>
-                <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-                  Мощный браузер с ИИ-поиском, голосовым управлением и поиском музыки
-                </p>
-              </div>
-
-              <Tabs defaultValue="text" className="w-full">
-                <TabsList className="grid w-full grid-cols-4 max-w-2xl mx-auto">
-                  {quickSearchModes.map((mode) => (
-                    <TabsTrigger key={mode.id} value={mode.id} className="gap-2">
-                      <Icon name={mode.icon as any} size={18} />
-                      <span className="hidden sm:inline">{mode.label}</span>
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-
-                <TabsContent value="text" className="mt-8">
-                  <Card className="p-8 max-w-2xl mx-auto">
-                    <h3 className="text-xl font-semibold mb-4 text-foreground">Текстовый поиск</h3>
-                    <p className="text-muted-foreground mb-6">
-                      Используй поисковую строку выше для быстрого поиска информации
-                    </p>
-                    <div className="space-y-2">
-                      <h4 className="text-sm font-medium text-foreground">Популярные запросы:</h4>
-                      <div className="flex flex-wrap gap-2">
-                        {['Новости', 'Погода', 'Курс валют', 'Спорт', 'Технологии'].map((tag) => (
-                          <Badge key={tag} variant="secondary" className="cursor-pointer hover:bg-accent">
-                            {tag}
-                          </Badge>
-                        ))}
-                      </div>
+              {!hasSearched && (
+                <>
+                  <div className="text-center space-y-4 py-12">
+                    <div className="inline-flex items-center justify-center w-20 h-20 bg-primary/10 rounded-full mb-4 animate-pulse">
+                      <Icon name="Zap" size={40} className="text-primary" />
                     </div>
-                  </Card>
-                </TabsContent>
-
-                <TabsContent value="voice" className="mt-8">
-                  <Card className="p-8 max-w-2xl mx-auto text-center">
-                    <div className="inline-flex items-center justify-center w-24 h-24 bg-primary/10 rounded-full mb-6">
-                      <Icon name="Mic" size={48} className="text-primary" />
-                    </div>
-                    <h3 className="text-xl font-semibold mb-4 text-foreground">Голосовой поиск</h3>
-                    <p className="text-muted-foreground mb-6">
-                      Нажми на кнопку микрофона и произнеси свой запрос
+                    <h2 className="text-4xl font-bold text-foreground">
+                      Добро пожаловать в SearchPro
+                    </h2>
+                    <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+                      Мощный браузер с реальным поиском, голосовым управлением и поиском музыки
                     </p>
-                    <Button
-                      size="lg"
-                      className="bg-primary hover:bg-primary/90"
-                      onClick={handleVoiceSearch}
-                    >
-                      {isListening ? 'Остановить запись' : 'Начать запись'}
-                    </Button>
-                  </Card>
-                </TabsContent>
+                  </div>
 
-                <TabsContent value="image" className="mt-8">
-                  <Card className="p-8 max-w-2xl mx-auto text-center">
-                    <div className="inline-flex items-center justify-center w-24 h-24 bg-secondary/10 rounded-full mb-6">
-                      <Icon name="Image" size={48} className="text-secondary" />
-                    </div>
-                    <h3 className="text-xl font-semibold mb-4 text-foreground">Поиск по фото</h3>
-                    <p className="text-muted-foreground mb-6">
-                      Загрузи изображение, чтобы найти похожие картинки или информацию
-                    </p>
-                    <Button size="lg" variant="secondary">
-                      <Icon name="Upload" size={20} className="mr-2" />
-                      Загрузить фото
-                    </Button>
-                  </Card>
-                </TabsContent>
+                  <Tabs value={searchType} onValueChange={changeSearchType} className="w-full">
+                    <TabsList className="grid w-full grid-cols-4 max-w-2xl mx-auto">
+                      {quickSearchModes.map((mode) => (
+                        <TabsTrigger key={mode.id} value={mode.id} className="gap-2">
+                          <Icon name={mode.icon as any} size={18} />
+                          <span className="hidden sm:inline">{mode.label}</span>
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
 
-                <TabsContent value="music" className="mt-8">
-                  <Card className="p-8 max-w-2xl mx-auto">
-                    <div className="flex items-center gap-4 mb-6">
-                      <div className="inline-flex items-center justify-center w-16 h-16 bg-primary/10 rounded-full">
-                        <Icon name="Music" size={32} className="text-primary" />
-                      </div>
-                      <div>
-                        <h3 className="text-xl font-semibold text-foreground">Поиск музыки</h3>
-                        <p className="text-sm text-muted-foreground">
-                          Найди песню по описанию или настроению
+                    <TabsContent value="web" className="mt-8">
+                      <Card className="p-8 max-w-2xl mx-auto">
+                        <h3 className="text-xl font-semibold mb-4 text-foreground">Текстовый поиск</h3>
+                        <p className="text-muted-foreground mb-6">
+                          Используй поисковую строку выше для реального поиска в интернете
                         </p>
+                        <div className="space-y-2">
+                          <h4 className="text-sm font-medium text-foreground">Популярные запросы:</h4>
+                          <div className="flex flex-wrap gap-2">
+                            {['Новости', 'Погода', 'Курс валют', 'Python', 'JavaScript'].map((tag) => (
+                              <Badge 
+                                key={tag} 
+                                variant="secondary" 
+                                className="cursor-pointer hover:bg-accent"
+                                onClick={() => {
+                                  setSearchQuery(tag);
+                                  handleSearch(tag, 'web');
+                                }}
+                              >
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      </Card>
+                    </TabsContent>
+
+                    <TabsContent value="voice" className="mt-8">
+                      <Card className="p-8 max-w-2xl mx-auto text-center">
+                        <div className={`inline-flex items-center justify-center w-24 h-24 bg-primary/10 rounded-full mb-6 ${isListening ? 'animate-pulse' : ''}`}>
+                          <Icon name="Mic" size={48} className="text-primary" />
+                        </div>
+                        <h3 className="text-xl font-semibold mb-4 text-foreground">Голосовой поиск</h3>
+                        <p className="text-muted-foreground mb-6">
+                          {isListening ? 'Слушаю... Говорите!' : 'Нажми на кнопку и произнеси свой запрос'}
+                        </p>
+                        <Button
+                          size="lg"
+                          className="bg-primary hover:bg-primary/90"
+                          onClick={handleVoiceSearch}
+                          disabled={isListening}
+                        >
+                          {isListening ? 'Слушаю...' : 'Начать запись'}
+                        </Button>
+                      </Card>
+                    </TabsContent>
+
+                    <TabsContent value="image" className="mt-8">
+                      <Card className="p-8 max-w-2xl mx-auto text-center">
+                        <div className="inline-flex items-center justify-center w-24 h-24 bg-secondary/10 rounded-full mb-6">
+                          <Icon name="Image" size={48} className="text-secondary" />
+                        </div>
+                        <h3 className="text-xl font-semibold mb-4 text-foreground">Поиск по фото</h3>
+                        <p className="text-muted-foreground mb-6">
+                          Загрузи изображение для поиска похожих картинок
+                        </p>
+                        <Button size="lg" variant="secondary" onClick={handleImageSearch}>
+                          <Icon name="Upload" size={20} className="mr-2" />
+                          Загрузить фото
+                        </Button>
+                      </Card>
+                    </TabsContent>
+
+                    <TabsContent value="music" className="mt-8">
+                      <Card className="p-8 max-w-2xl mx-auto">
+                        <div className="flex items-center gap-4 mb-6">
+                          <div className="inline-flex items-center justify-center w-16 h-16 bg-primary/10 rounded-full">
+                            <Icon name="Music" size={32} className="text-primary" />
+                          </div>
+                          <div>
+                            <h3 className="text-xl font-semibold text-foreground">Поиск музыки</h3>
+                            <p className="text-sm text-muted-foreground">
+                              Найди песню по описанию или настроению
+                            </p>
+                          </div>
+                        </div>
+                        <Input
+                          placeholder="Например: энергичная рок-музыка 90-х"
+                          className="mb-4"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') {
+                              handleSearch(searchQuery, 'music');
+                            }
+                          }}
+                        />
+                        <div className="space-y-2">
+                          <h4 className="text-sm font-medium text-foreground">Примеры запросов:</h4>
+                          <div className="flex flex-wrap gap-2">
+                            {['Грустная музыка', 'Танцевальные хиты', 'Джаз', 'Рок 80-х', 'Поп'].map((tag) => (
+                              <Badge 
+                                key={tag} 
+                                variant="outline" 
+                                className="cursor-pointer hover:bg-accent"
+                                onClick={() => {
+                                  setSearchQuery(tag);
+                                  handleSearch(tag, 'music');
+                                }}
+                              >
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      </Card>
+                    </TabsContent>
+                  </Tabs>
+                </>
+              )}
+
+              {hasSearched && (
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-2xl font-bold text-foreground">
+                      Результаты поиска: {searchQuery}
+                    </h2>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setHasSearched(false);
+                        setSearchResults([]);
+                        setSearchQuery('');
+                      }}
+                    >
+                      <Icon name="X" size={16} className="mr-2" />
+                      Очистить
+                    </Button>
+                  </div>
+
+                  {isSearching && (
+                    <div className="text-center py-12">
+                      <div className="inline-flex items-center justify-center w-16 h-16 bg-primary/10 rounded-full mb-4 animate-spin">
+                        <Icon name="Loader2" size={32} className="text-primary" />
                       </div>
+                      <p className="text-muted-foreground">Ищем...</p>
                     </div>
-                    <Input
-                      placeholder="Например: энергичная рок-музыка 90-х"
-                      className="mb-4"
-                    />
-                    <div className="space-y-2">
-                      <h4 className="text-sm font-medium text-foreground">Примеры запросов:</h4>
-                      <div className="flex flex-wrap gap-2">
-                        {['Грустная музыка', 'Танцевальные хиты', 'Джаз', 'Рок 80-х', 'Поп'].map((tag) => (
-                          <Badge key={tag} variant="outline" className="cursor-pointer hover:bg-accent">
-                            {tag}
-                          </Badge>
-                        ))}
-                      </div>
+                  )}
+
+                  {!isSearching && searchResults.length === 0 && (
+                    <Card className="p-8 text-center">
+                      <Icon name="SearchX" size={48} className="text-muted-foreground mx-auto mb-4" />
+                      <p className="text-muted-foreground">Ничего не найдено</p>
+                    </Card>
+                  )}
+
+                  {!isSearching && searchResults.length > 0 && (
+                    <div className="space-y-4">
+                      {searchResults.map((result, idx) => (
+                        <Card key={idx} className="p-6 hover:bg-accent transition-colors">
+                          <a 
+                            href={result.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="block space-y-2"
+                          >
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1">
+                                <h3 className="text-lg font-semibold text-primary hover:underline">
+                                  {result.title}
+                                </h3>
+                                <p className="text-sm text-muted-foreground mt-1">
+                                  {result.url}
+                                </p>
+                              </div>
+                              <Badge variant="secondary">{result.source}</Badge>
+                            </div>
+                            <p className="text-foreground">
+                              {result.snippet}
+                            </p>
+                            {result.thumbnail && (
+                              <img 
+                                src={result.thumbnail} 
+                                alt={result.title}
+                                className="w-full max-w-xs rounded-lg mt-4"
+                              />
+                            )}
+                          </a>
+                        </Card>
+                      ))}
                     </div>
-                  </Card>
-                </TabsContent>
-              </Tabs>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
